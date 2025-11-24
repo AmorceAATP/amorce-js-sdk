@@ -3,12 +3,16 @@
  * Defines the strict NATP v0.1 data structure.
  * Handles canonical serialization and signing.
  * v1.1 Fix: Strips ASN.1 header from PEM public keys.
+ * v1.2 Update: Adds Priority Lane support.
  */
 
 import stringify from 'fast-json-stable-stringify';
 import { v4 as uuidv4 } from 'uuid';
 import sodium from 'libsodium-wrappers';
 import { IdentityManager } from './identity';
+
+// Define strict types for priority
+export type NexusPriority = 'normal' | 'high' | 'critical';
 
 export interface SenderInfo {
   public_key: string; // PEM format
@@ -24,14 +28,21 @@ export interface SettlementInfo {
 export class NexusEnvelope {
   natp_version: string = "0.1.0";
   id: string;
+  // UPDATE v1.2: Priority Lane
+  priority: NexusPriority;
   timestamp: number;
   sender: SenderInfo;
   payload: Record<string, any>;
   settlement: SettlementInfo;
   signature?: string;
 
-  constructor(sender: SenderInfo, payload: Record<string, any>) {
+  constructor(
+    sender: SenderInfo,
+    payload: Record<string, any>,
+    priority: NexusPriority = 'normal' // Default matches Python
+  ) {
     this.id = uuidv4();
+    this.priority = priority;
     // Python uses float seconds, JS uses ms. Convert to seconds.
     this.timestamp = Date.now() / 1000;
     this.sender = sender;

@@ -1,11 +1,18 @@
 /**
  * Nexus Client Module (Task 2.4)
  * High-level HTTP client for the Nexus Agent Transaction Protocol (NATP).
- * Encapsulates envelope creation, signing, and transport using native fetch.
+ * Encapsulates envelope creation, signing, and transport using fetch with retry logic.
  */
 
 import { IdentityManager } from './identity';
-import { NexusEnvelope, SenderInfo } from './envelope';
+import { NexusEnvelope, SenderInfo, NexusPriority } from './envelope';
+// @ts-ignore: cross-fetch types can be tricky, ignore if implicit
+import originalFetch from 'cross-fetch';
+// @ts-ignore: fetch-retry usually lacks types or has conflict, we handle it manually
+import fetchRetry from 'fetch-retry';
+
+// Wrap fetch with retry logic (Resilience v0.1.2)
+const fetch = fetchRetry(originalFetch as any);
 
 export interface ServiceContract {
   service_id: string;
@@ -40,15 +47,15 @@ export class NexusClient {
   /**
    * Helper to build and sign a standard envelope.
    */
-  private async createEnvelope(payload: Record<string, any>): Promise<NexusEnvelope> {
+  private async createEnvelope(payload: Record<string, any>, priority: NexusPriority): Promise<NexusEnvelope> {
     // 1. Build Sender Info
     const sender: SenderInfo = {
       public_key: this.identity.getPublicKeyPem(),
       agent_id: this.agentId
     };
 
-    // 2. Create Envelope
-    const envelope = new NexusEnvelope(sender, payload);
+    // 2. Create Envelope with Priority
+    const envelope = new NexusEnvelope(sender, payload, priority);
 
     // 3. Sign Envelope
     await envelope.sign(this.identity);
@@ -67,7 +74,11 @@ export class NexusClient {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        // Resilience Config
+        retries: 3,
+        // FIX TS7006: Explicitly type 'attempt' as number
+        retryDelay: (attempt: number) => Math.pow(2, attempt) * 1000 // 1s, 2s, 4s
       });
 
       if (!response.ok) {
@@ -86,7 +97,12 @@ export class NexusClient {
    * P-9.3: Execute a transaction via the Orchestrator.
    * Wraps the payload in a signed NATP Envelope.
    */
-  public async transact(serviceContract: ServiceContract, payload: Record<string, any>): Promise<any> {
+  public async transact(
+      serviceContract: ServiceContract,
+      payload: Record<string, any>,
+      priority: NexusPriority = 'normal'
+  ): Promise<any> {
+
     if (!serviceContract.service_id) {
       console.error("Invalid service contract: missing service_id");
       return null;
@@ -99,8 +115,8 @@ export class NexusClient {
       data: payload // The actual application data
     };
 
-    // 2. Create Signed Envelope
-    const envelope = await this.createEnvelope(transactionPayload);
+    // 2. Create Signed Envelope (Injecting Priority)
+    const envelope = await this.createEnvelope(transactionPayload, priority);
 
     // 3. Send to Orchestrator
     const url = `${this.orchestratorUrl}/v1/a2a/transact`;
@@ -114,10 +130,16 @@ export class NexusClient {
     }
 
     try {
+      // 4. Send with Auto-Retry (Resilience)
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify(envelope)
+        body: JSON.stringify(envelope),
+        // Retry Strategy: 3 attempts, exponential backoff
+        retries: 3,
+        retryOn: [500, 502, 503, 504, 429], // Retry on server errors & rate limits
+        // FIX TS7006: Explicitly type 'attempt' as number
+        retryDelay: (attempt: number) => Math.pow(2, attempt) * 1000 // 1000, 2000, 4000 ms
       });
 
       if (!response.ok) {

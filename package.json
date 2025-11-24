@@ -1,6 +1,6 @@
 {
     "name": "@nexus/sdk",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "description": "Official TypeScript/JavaScript SDK for the Nexus Agent Transaction Protocol (NATP)",
     "main": "./dist/index.js",
     "module": "./dist/index.mjs",
@@ -26,10 +26,18 @@
     ],
     "author": "Athena Architecture",
     "license": "MIT",
+    "dependencies": {
+        "libsodium-wrappers": "^0.7.13",
+        "fast-json-stable-stringify": "^2.1.0",
+        "uuid": "^9.0.1",
+        "fetch-retry": "^5.0.6",
+        "cross-fetch": "^4.0.0"
+    },
     "devDependencies": {
         "@types/jest": "^29.5.12",
         "@types/node": "^20.11.24",
         "@types/uuid": "^9.0.8",
+        "@types/libsodium-wrappers": "^0.7.14",
         "@typescript-eslint/eslint-plugin": "^7.1.0",
         "@typescript-eslint/parser": "^7.1.0",
         "eslint": "^8.57.0",
@@ -37,10 +45,5 @@
         "ts-jest": "^29.1.2",
         "tsup": "^8.0.2",
         "typescript": "^5.3.3"
-    },
-    "dependencies": {
-        "libsodium-wrappers": "^0.7.13",
-        "fast-json-stable-stringify": "^2.1.0",
-        "uuid": "^9.0.1"
     }
 }
