@@ -1,18 +1,36 @@
 /**
- * Nexus Client Module (Task 2.4)
+ * Nexus Client Module (Task 2.4 - Updated for v0.1.7)
  * High-level HTTP client for the Nexus Agent Transaction Protocol (NATP).
- * Encapsulates envelope creation, signing, and transport using fetch with retry logic.
+ * Encapsulates signature creation and transport using fetch with retry logic.
+ * 
+ * v0.1.7 Updates:
+ * - Flat transaction protocol (signature in header, not wrapped in envelope)
+ * - Auto-derived Agent ID from identity
+ * - Proper exception handling
+ * - Updated API key header to X-API-Key
+ * - URL validation
  */
 
 import { IdentityManager } from './identity';
-import { NexusEnvelope, SenderInfo, NexusPriority } from './envelope';
+import { NexusPriority } from './envelope';
+import { NexusConfigError, NexusNetworkError, NexusAPIError } from './exceptions';
 // @ts-ignore: cross-fetch types can be tricky, ignore if implicit
 import originalFetch from 'cross-fetch';
 // @ts-ignore: fetch-retry usually lacks types or has conflict, we handle it manually
 import fetchRetry from 'fetch-retry';
 
-// Wrap fetch with retry logic (Resilience v0.1.2)
+// Wrap fetch with retry logic (Resilience v0.1.2+)
 const fetch = fetchRetry(originalFetch as any);
+
+/**
+ * Priority Level constants for easier developer access.
+ * Matches Python SDK's PriorityLevel class.
+ */
+export class PriorityLevel {
+  static readonly NORMAL: NexusPriority = 'normal';
+  static readonly HIGH: NexusPriority = 'high';
+  static readonly CRITICAL: NexusPriority = 'critical';
+}
 
 export interface ServiceContract {
   service_id: string;
@@ -26,7 +44,7 @@ export class NexusClient {
   private identity: IdentityManager;
   private directoryUrl: string;
   private orchestratorUrl: string;
-  private agentId?: string;
+  private agentId: string;
   private apiKey?: string;
 
   constructor(
@@ -37,30 +55,22 @@ export class NexusClient {
     apiKey?: string
   ) {
     this.identity = identity;
+
+    // Validate URLs
+    if (!directoryUrl.startsWith('http://') && !directoryUrl.startsWith('https://')) {
+      throw new NexusConfigError(`Invalid directory_url: ${directoryUrl}`);
+    }
+    if (!orchestratorUrl.startsWith('http://') && !orchestratorUrl.startsWith('https://')) {
+      throw new NexusConfigError(`Invalid orchestrator_url: ${orchestratorUrl}`);
+    }
+
     // Remove trailing slashes for consistency
-    this.directoryUrl = directoryUrl.replace(/\/$/, "");
-    this.orchestratorUrl = orchestratorUrl.replace(/\/$/, "");
-    this.agentId = agentId;
+    this.directoryUrl = directoryUrl.replace(/\/$/, '');
+    this.orchestratorUrl = orchestratorUrl.replace(/\/$/, '');
+
+    // MCP 2.1: Read Agent ID directly from the identity derivation
+    this.agentId = agentId || identity.getAgentId();
     this.apiKey = apiKey;
-  }
-
-  /**
-   * Helper to build and sign a standard envelope.
-   */
-  private async createEnvelope(payload: Record<string, any>, priority: NexusPriority): Promise<NexusEnvelope> {
-    // 1. Build Sender Info
-    const sender: SenderInfo = {
-      public_key: this.identity.getPublicKeyPem(),
-      agent_id: this.agentId
-    };
-
-    // 2. Create Envelope with Priority
-    const envelope = new NexusEnvelope(sender, payload, priority);
-
-    // 3. Sign Envelope
-    await envelope.sign(this.identity);
-
-    return envelope;
   }
 
   /**
@@ -77,82 +87,94 @@ export class NexusClient {
         },
         // Resilience Config
         retries: 3,
-        // FIX TS7006: Explicitly type 'attempt' as number
         retryDelay: (attempt: number) => Math.pow(2, attempt) * 1000 // 1s, 2s, 4s
       });
 
       if (!response.ok) {
-        console.error(`Discovery failed: ${response.status} ${response.statusText}`);
-        return [];
+        const errorText = await response.text();
+        throw new NexusAPIError(
+          `Discovery API error: ${response.status}`,
+          response.status,
+          errorText
+        );
       }
 
       return await response.json();
     } catch (e) {
-      console.error("Discovery network error:", e);
-      return [];
+      if (e instanceof NexusAPIError) {
+        throw e;
+      }
+      throw new NexusNetworkError(`Discovery network error: ${e}`);
     }
   }
 
   /**
    * P-9.3: Execute a transaction via the Orchestrator.
-   * Wraps the payload in a signed NATP Envelope.
+   * FIX: Aligned with Orchestrator v1.4 protocol (Flat JSON + Header Signature).
+   * Matches Python SDK's transact() method.
    */
   public async transact(
-      serviceContract: ServiceContract,
-      payload: Record<string, any>,
-      priority: NexusPriority = 'normal'
+    serviceContract: ServiceContract,
+    payload: Record<string, any>,
+    priority: NexusPriority = PriorityLevel.NORMAL
   ): Promise<any> {
-
     if (!serviceContract.service_id) {
-      console.error("Invalid service contract: missing service_id");
-      return null;
+      throw new NexusConfigError('Invalid service contract: missing service_id');
     }
 
-    // 1. Prepare transaction payload (Routing info + Data)
-    const transactionPayload = {
+    // --- PROTOCOL ALIGNMENT ---
+    // 1. Build the flat JSON body expected by the server
+    const requestBody = {
       service_id: serviceContract.service_id,
       consumer_agent_id: this.agentId,
-      data: payload // The actual application data
+      payload: payload,
+      priority: priority
     };
 
-    // 2. Create Signed Envelope (Injecting Priority)
-    const envelope = await this.createEnvelope(transactionPayload, priority);
+    // 2. Sign this exact JSON
+    const canonicalBytes = IdentityManager.getCanonicalJsonBytes(requestBody);
+    const signature = await this.identity.sign(canonicalBytes);
 
-    // 3. Send to Orchestrator
-    const url = `${this.orchestratorUrl}/v1/a2a/transact`;
-
+    // 3. Put the signature in the header
     const headers: Record<string, string> = {
+      'X-Agent-Signature': signature,
       'Content-Type': 'application/json'
     };
 
+    // FIX: Use X-API-Key instead of X-ATP-Key to match Python SDK
     if (this.apiKey) {
-      headers['X-ATP-Key'] = this.apiKey;
+      headers['X-API-Key'] = this.apiKey;
     }
+
+    const url = `${this.orchestratorUrl}/v1/a2a/transact`;
 
     try {
       // 4. Send with Auto-Retry (Resilience)
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify(envelope),
+        body: JSON.stringify(requestBody),
         // Retry Strategy: 3 attempts, exponential backoff
         retries: 3,
         retryOn: [500, 502, 503, 504, 429], // Retry on server errors & rate limits
-        // FIX TS7006: Explicitly type 'attempt' as number
-        retryDelay: (attempt: number) => Math.pow(2, attempt) * 1000 // 1000, 2000, 4000 ms
+        retryDelay: (attempt: number) => Math.pow(2, attempt) * 1000 // 1s, 2s, 4s
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`Transaction failed: ${response.status} - ${errorText}`);
-        return { error: `HTTP ${response.status}`, details: errorText };
+        throw new NexusAPIError(
+          `Transaction failed with status ${response.status}`,
+          response.status,
+          errorText
+        );
       }
 
       return await response.json();
-
     } catch (e) {
-      console.error("Transaction network error:", e);
-      return null;
+      if (e instanceof NexusAPIError) {
+        throw e;
+      }
+      throw new NexusNetworkError(`Transaction network error: ${e}`);
     }
   }
 }

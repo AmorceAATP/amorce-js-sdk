@@ -1,17 +1,23 @@
 /**
  * Nexus SDK for JavaScript/TypeScript
- * Version 0.1.2
+ * Version 0.1.7
+ * 
+ * Aligned with nexus-py-sdk v0.1.7
  */
 
-export const SDK_VERSION = "0.1.2"; // Mise à jour ici
+export const SDK_VERSION = "0.1.7";
+export const NATP_VERSION = "0.1.0";
 
-// Task 2.2: Export Identity Module
+// Export Exception Classes
+export * from './exceptions';
+
+// Export Identity Module (with Provider Pattern)
 export * from './identity';
 
-// Task 2.3: Export Envelope Module
+// Export Envelope Module (Legacy/Future Use)
 export * from './envelope';
 
-// Task 2.4: Export Client Module
+// Export Client Module
 export * from './client';
 
 console.log(`Nexus JS SDK v${SDK_VERSION} loaded.`);

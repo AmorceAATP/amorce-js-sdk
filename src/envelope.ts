@@ -1,15 +1,22 @@
 /**
- * Nexus Envelope (Task 2.3 - Fixed)
+ * Nexus Envelope (Task 2.3 - Updated for v0.1.7)
  * Defines the strict NATP v0.1 data structure.
  * Handles canonical serialization and signing.
- * v1.1 Fix: Strips ASN.1 header from PEM public keys.
- * v1.2 Update: Adds Priority Lane support.
+ * 
+ * v0.1.7 Updates:
+ * - Enhanced error handling with custom exceptions
+ * - Better validation
+ * 
+ * NOTE: This module is kept for potential future use and backward compatibility.
+ * The current transaction protocol (v0.1.7) uses a flat JSON structure instead
+ * of wrapping everything in an envelope.
  */
 
 import stringify from 'fast-json-stable-stringify';
 import { v4 as uuidv4 } from 'uuid';
 import sodium from 'libsodium-wrappers';
 import { IdentityManager } from './identity';
+import { NexusValidationError } from './exceptions';
 
 // Define strict types for priority
 export type NexusPriority = 'normal' | 'high' | 'critical';
@@ -28,7 +35,6 @@ export interface SettlementInfo {
 export class NexusEnvelope {
   natp_version: string = "0.1.0";
   id: string;
-  // UPDATE v1.2: Priority Lane
   priority: NexusPriority;
   timestamp: number;
   sender: SenderInfo;
@@ -39,8 +45,15 @@ export class NexusEnvelope {
   constructor(
     sender: SenderInfo,
     payload: Record<string, any>,
-    priority: NexusPriority = 'normal' // Default matches Python
+    priority: NexusPriority = 'normal'
   ) {
+    // Validate priority
+    if (!['normal', 'high', 'critical'].includes(priority)) {
+      throw new NexusValidationError(
+        `Invalid priority: ${priority}. Must be 'normal', 'high', or 'critical'.`
+      );
+    }
+
     this.id = uuidv4();
     this.priority = priority;
     // Python uses float seconds, JS uses ms. Convert to seconds.
@@ -87,7 +100,7 @@ export class NexusEnvelope {
     // The SubjectPublicKeyInfo format is 44 bytes total (12 bytes header + 32 bytes key).
     // Libsodium only wants the raw 32 bytes.
     if (fullBytes.length > 32) {
-        return fullBytes.slice(fullBytes.length - 32);
+      return fullBytes.slice(fullBytes.length - 32);
     }
 
     return fullBytes;
@@ -97,7 +110,10 @@ export class NexusEnvelope {
    * Verifies the envelope's signature against its own sender public key.
    */
   public async verify(): Promise<boolean> {
-    if (!this.signature) return false;
+    if (!this.signature) {
+      throw new NexusValidationError('Envelope has no signature');
+    }
+
     await sodium.ready;
 
     try {
@@ -106,8 +122,10 @@ export class NexusEnvelope {
 
       return IdentityManager.verify(canonicalBytes, this.signature, publicKeyBytes);
     } catch (e) {
-      console.error("Verification failed:", e);
-      return false;
+      throw new NexusValidationError(`Verification failed: ${e}`);
     }
   }
 }
+
+// DX ALIAS: For simpler imports
+export const Envelope = NexusEnvelope;
