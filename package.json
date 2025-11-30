@@ -1,6 +1,6 @@
 {
     "name": "@amorce/sdk",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "Official TypeScript/JavaScript SDK for the Amorce Agent Transaction Protocol (AATP)",
     "main": "./dist/index.js",
     "module": "./dist/index.mjs",
@@ -29,9 +29,9 @@
     "author": "Athena Architecture",
     "license": "MIT",
     "dependencies": {
-        "cross-fetch": "^4.0.0",
+        "undici": "^6.0.0",
+        "p-retry": "^6.0.0",
         "fast-json-stable-stringify": "^2.1.0",
-        "fetch-retry": "^5.0.6",
         "libsodium-wrappers": "^0.7.13",
         "uuid": "^9.0.1"
     },

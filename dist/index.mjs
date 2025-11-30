@@ -259,9 +259,27 @@ var AmorceEnvelope = class _AmorceEnvelope {
 var Envelope = AmorceEnvelope;
 
 // src/client.ts
-import originalFetch from "cross-fetch";
-import fetchRetry from "fetch-retry";
-var fetch = fetchRetry(originalFetch);
+import { request } from "undici";
+import pRetry from "p-retry";
+import { v4 as uuidv42 } from "uuid";
+
+// src/models.ts
+var AmorceResponseImpl = class {
+  constructor(transaction_id, status_code, result, error) {
+    this.transaction_id = transaction_id;
+    this.status_code = status_code;
+    this.result = result;
+    this.error = error;
+  }
+  isSuccess() {
+    return this.status_code >= 200 && this.status_code < 300;
+  }
+  isRetryable() {
+    return [429, 500, 502, 503, 504].includes(this.status_code);
+  }
+};
+
+// src/client.ts
 var PriorityLevel = class {
 };
 PriorityLevel.NORMAL = "normal";
@@ -282,30 +300,45 @@ var AmorceClient = class {
     this.apiKey = apiKey;
   }
   /**
-   * P-7.1: Discover services from the Trust Directory.
+   * Discover services from the Trust Directory.
+   * Uses p-retry for exponential backoff with jitter.
    */
   async discover(serviceType) {
     const url = `${this.directoryUrl}/api/v1/services/search?service_type=${encodeURIComponent(serviceType)}`;
     try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json"
+      const response = await pRetry(
+        async () => {
+          const res = await request(url, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json"
+            }
+          });
+          if ([429, 503, 504].includes(res.statusCode)) {
+            throw new Error(`Retryable status: ${res.statusCode}`);
+          }
+          if (res.statusCode !== 200) {
+            const errorText = await res.body.text();
+            throw new AmorceAPIError(
+              `Discovery API error: ${res.statusCode}`,
+              res.statusCode,
+              errorText
+            );
+          }
+          return res;
         },
-        // Resilience Config
-        retries: 3,
-        retryDelay: (attempt) => Math.pow(2, attempt) * 1e3
-        // 1s, 2s, 4s
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new AmorceAPIError(
-          `Discovery API error: ${response.status}`,
-          response.status,
-          errorText
-        );
-      }
-      return await response.json();
+        {
+          retries: 3,
+          minTimeout: 1e3,
+          maxTimeout: 1e4,
+          randomize: true,
+          // Adds jitter to prevent thundering herd
+          onFailedAttempt: (error) => {
+            console.warn(`Discovery retry attempt ${error.attemptNumber}: ${error.message}`);
+          }
+        }
+      );
+      return await response.body.json();
     } catch (e) {
       if (e instanceof AmorceAPIError) {
         throw e;
@@ -314,14 +347,25 @@ var AmorceClient = class {
     }
   }
   /**
-   * P-9.3: Execute a transaction via the Orchestrator.
-   * FIX: Aligned with Orchestrator v1.4 protocol (Flat JSON + Header Signature).
-   * Matches Python SDK's transact() method.
+   * Execute a transaction via the Orchestrator.
+   * 
+   * v2.1.0 Enhancements:
+   * - HTTP/2 via undici (automatic for https://)
+   * - Exponential backoff + jitter via p-retry
+   * - Idempotency key auto-generation
+   * - Returns AmorceResponse with utility methods
+   * 
+   * @param serviceContract - Service identifier (must contain service_id)
+   * @param payload - Transaction payload
+   * @param priority - Priority level (normal|high|critical)
+   * @param idempotencyKey - Optional idempotency key (auto-generated if not provided)
+   * @returns AmorceResponse with transaction details
    */
-  async transact(serviceContract, payload, priority = PriorityLevel.NORMAL) {
+  async transact(serviceContract, payload, priority = PriorityLevel.NORMAL, idempotencyKey) {
     if (!serviceContract.service_id) {
       throw new AmorceConfigError("Invalid service contract: missing service_id");
     }
+    const key = idempotencyKey || uuidv42();
     const requestBody = {
       service_id: serviceContract.service_id,
       consumer_agent_id: this.agentId,
@@ -332,6 +376,10 @@ var AmorceClient = class {
     const signature = await this.identity.sign(canonicalBytes);
     const headers = {
       "X-Agent-Signature": signature,
+      "X-Amorce-Idempotency": key,
+      // NEW in v2.1.0
+      "X-Amorce-Agent-ID": this.agentId,
+      // NEW in v2.1.0
       "Content-Type": "application/json"
     };
     if (this.apiKey) {
@@ -339,26 +387,55 @@ var AmorceClient = class {
     }
     const url = `${this.orchestratorUrl}/v1/a2a/transact`;
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-        // Retry Strategy: 3 attempts, exponential backoff
-        retries: 3,
-        retryOn: [500, 502, 503, 504, 429],
-        // Retry on server errors & rate limits
-        retryDelay: (attempt) => Math.pow(2, attempt) * 1e3
-        // 1s, 2s, 4s
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new AmorceAPIError(
-          `Transaction failed with status ${response.status}`,
-          response.status,
-          errorText
-        );
-      }
-      return await response.json();
+      const response = await pRetry(
+        async () => {
+          const res = await request(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(requestBody)
+            // undici uses HTTP/2 by default for https:// URLs
+          });
+          if ([429, 503, 504].includes(res.statusCode)) {
+            throw new Error(`Retryable status: ${res.statusCode}`);
+          }
+          if (res.statusCode >= 400 && res.statusCode < 500 && res.statusCode !== 429) {
+            const errorText = await res.body.text();
+            throw new AmorceAPIError(
+              `Transaction failed with status ${res.statusCode}`,
+              res.statusCode,
+              errorText
+            );
+          }
+          if (res.statusCode >= 500) {
+            throw new Error(`Server error: ${res.statusCode}`);
+          }
+          return res;
+        },
+        {
+          retries: 3,
+          minTimeout: 1e3,
+          // 1s
+          maxTimeout: 1e4,
+          // 10s
+          randomize: true,
+          // Adds 0-2s jitter
+          onFailedAttempt: (error) => {
+            console.warn(`Transaction retry attempt ${error.attemptNumber}: ${error.message}`);
+          }
+        }
+      );
+      const jsonData = await response.body.json();
+      return new AmorceResponseImpl(
+        jsonData.transaction_id || key,
+        response.statusCode,
+        {
+          status: jsonData.status || "success",
+          message: jsonData.message,
+          data: jsonData.data
+        },
+        void 0
+        // No error for successful responses
+      );
     } catch (e) {
       if (e instanceof AmorceAPIError) {
         throw e;
@@ -369,7 +446,7 @@ var AmorceClient = class {
 };
 
 // src/index.ts
-var SDK_VERSION = "0.1.7";
+var SDK_VERSION = "2.1.0";
 var AATP_VERSION = "0.1.0";
 console.log(`Amorce JS SDK v${SDK_VERSION} loaded.`);
 export {
@@ -380,6 +457,7 @@ export {
   AmorceEnvelope,
   AmorceError,
   AmorceNetworkError,
+  AmorceResponseImpl,
   AmorceSecurityError,
   AmorceValidationError,
   EnvVarProvider,

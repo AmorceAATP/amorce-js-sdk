@@ -1,26 +1,22 @@
 /**
- * Amorce Client Module (Task 2.4 - Updated for v0.1.7)
+ * Amorce Client Module (v2.1.0 - Enhanced)
  * High-level HTTP client for the Amorce Agent Transaction Protocol (AATP).
- * Encapsulates signature creation and transport using fetch with retry logic.
  * 
- * v0.1.7 Updates:
- * - Flat transaction protocol (signature in header, not wrapped in envelope)
- * - Auto-derived Agent ID from identity
- * - Proper exception handling
- * - Updated API key header to X-API-Key
- * - URL validation
+ * v2.1.0 Updates (Feature Parity with Python SDK v0.2.0):
+ * - HTTP/2 support via undici
+ * - Exponential backoff + jitter via p-retry
+ * - Idempotency key generation (UUIDv4)
+ * - Structured AmorceResponse return type
+ * - Additional headers: X-Amorce-Idempotency, X-Amorce-Agent-ID
  */
 
+import { request } from 'undici';
+import pRetry from 'p-retry';
+import { v4 as uuidv4 } from 'uuid';
 import { IdentityManager } from './identity';
 import { AmorcePriority } from './envelope';
 import { AmorceConfigError, AmorceNetworkError, AmorceAPIError } from './exceptions';
-// @ts-ignore: cross-fetch types can be tricky, ignore if implicit
-import originalFetch from 'cross-fetch';
-// @ts-ignore: fetch-retry usually lacks types or has conflict, we handle it manually
-import fetchRetry from 'fetch-retry';
-
-// Wrap fetch with retry logic (Resilience v0.1.2+)
-const fetch = fetchRetry(originalFetch as any);
+import { AmorceResponse, AmorceResponseImpl } from './models';
 
 /**
  * Priority Level constants for easier developer access.
@@ -34,9 +30,8 @@ export class PriorityLevel {
 
 export interface ServiceContract {
   service_id: string;
-  provider_agent_id: string;
-  service_type: string;
-  // ... other fields can be added as needed
+  provider_agent_id?: string;
+  service_type?: string;
   [key: string]: any;
 }
 
@@ -68,38 +63,56 @@ export class AmorceClient {
     this.directoryUrl = directoryUrl.replace(/\/$/, '');
     this.orchestratorUrl = orchestratorUrl.replace(/\/$/, '');
 
-    // MCP 2.1: Read Agent ID directly from the identity derivation
+    // Auto-derive Agent ID from identity
     this.agentId = agentId || identity.getAgentId();
     this.apiKey = apiKey;
   }
 
   /**
-   * P-7.1: Discover services from the Trust Directory.
+   * Discover services from the Trust Directory.
+   * Uses p-retry for exponential backoff with jitter.
    */
   public async discover(serviceType: string): Promise<ServiceContract[]> {
     const url = `${this.directoryUrl}/api/v1/services/search?service_type=${encodeURIComponent(serviceType)}`;
 
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
+      const response = await pRetry(
+        async () => {
+          const res = await request(url, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+
+          // Check for retryable status codes
+          if ([429, 503, 504].includes(res.statusCode)) {
+            throw new Error(`Retryable status: ${res.statusCode}`);
+          }
+
+          if (res.statusCode !== 200) {
+            const errorText = await res.body.text();
+            throw new AmorceAPIError(
+              `Discovery API error: ${res.statusCode}`,
+              res.statusCode,
+              errorText
+            );
+          }
+
+          return res;
         },
-        // Resilience Config
-        retries: 3,
-        retryDelay: (attempt: number) => Math.pow(2, attempt) * 1000 // 1s, 2s, 4s
-      });
+        {
+          retries: 3,
+          minTimeout: 1000,
+          maxTimeout: 10000,
+          randomize: true,  // Adds jitter to prevent thundering herd
+          onFailedAttempt: (error) => {
+            console.warn(`Discovery retry attempt ${error.attemptNumber}: ${error.message}`);
+          }
+        }
+      );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new AmorceAPIError(
-          `Discovery API error: ${response.status}`,
-          response.status,
-          errorText
-        );
-      }
-
-      return await response.json();
+      return await response.body.json() as ServiceContract[];
     } catch (e) {
       if (e instanceof AmorceAPIError) {
         throw e;
@@ -109,21 +122,34 @@ export class AmorceClient {
   }
 
   /**
-   * P-9.3: Execute a transaction via the Orchestrator.
-   * FIX: Aligned with Orchestrator v1.4 protocol (Flat JSON + Header Signature).
-   * Matches Python SDK's transact() method.
+   * Execute a transaction via the Orchestrator.
+   * 
+   * v2.1.0 Enhancements:
+   * - HTTP/2 via undici (automatic for https://)
+   * - Exponential backoff + jitter via p-retry
+   * - Idempotency key auto-generation
+   * - Returns AmorceResponse with utility methods
+   * 
+   * @param serviceContract - Service identifier (must contain service_id)
+   * @param payload - Transaction payload
+   * @param priority - Priority level (normal|high|critical)
+   * @param idempotencyKey - Optional idempotency key (auto-generated if not provided)
+   * @returns AmorceResponse with transaction details
    */
   public async transact(
     serviceContract: ServiceContract,
     payload: Record<string, any>,
-    priority: AmorcePriority = PriorityLevel.NORMAL
-  ): Promise<any> {
+    priority: AmorcePriority = PriorityLevel.NORMAL,
+    idempotencyKey?: string
+  ): Promise<AmorceResponse> {
     if (!serviceContract.service_id) {
       throw new AmorceConfigError('Invalid service contract: missing service_id');
     }
 
-    // --- PROTOCOL ALIGNMENT ---
-    // 1. Build the flat JSON body expected by the server
+    // AUTO-GENERATE IDEMPOTENCY KEY (v2.1.0)
+    const key = idempotencyKey || uuidv4();
+
+    // Build flat JSON body
     const requestBody = {
       service_id: serviceContract.service_id,
       consumer_agent_id: this.agentId,
@@ -131,17 +157,18 @@ export class AmorceClient {
       priority: priority
     };
 
-    // 2. Sign this exact JSON
+    // Sign the canonical request body
     const canonicalBytes = IdentityManager.getCanonicalJsonBytes(requestBody);
     const signature = await this.identity.sign(canonicalBytes);
 
-    // 3. Put the signature in the header
+    // Construct headers with ALL required fields
     const headers: Record<string, string> = {
       'X-Agent-Signature': signature,
+      'X-Amorce-Idempotency': key,           // NEW in v2.1.0
+      'X-Amorce-Agent-ID': this.agentId,     // NEW in v2.1.0
       'Content-Type': 'application/json'
     };
 
-    // FIX: Use X-API-Key instead of X-ATP-Key to match Python SDK
     if (this.apiKey) {
       headers['X-API-Key'] = this.apiKey;
     }
@@ -149,27 +176,63 @@ export class AmorceClient {
     const url = `${this.orchestratorUrl}/v1/a2a/transact`;
 
     try {
-      // 4. Send with Auto-Retry (Resilience)
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(requestBody),
-        // Retry Strategy: 3 attempts, exponential backoff
-        retries: 3,
-        retryOn: [500, 502, 503, 504, 429], // Retry on server errors & rate limits
-        retryDelay: (attempt: number) => Math.pow(2, attempt) * 1000 // 1s, 2s, 4s
-      });
+      // Execute with p-retry (exponential backoff + jitter)
+      const response = await pRetry(
+        async () => {
+          const res = await request(url, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(requestBody)
+            // undici uses HTTP/2 by default for https:// URLs
+          });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new AmorceAPIError(
-          `Transaction failed with status ${response.status}`,
-          response.status,
-          errorText
-        );
-      }
+          // Retry on specific status codes
+          if ([429, 503, 504].includes(res.statusCode)) {
+            throw new Error(`Retryable status: ${res.statusCode}`);
+          }
 
-      return await response.json();
+          // Non-retryable client errors (4xx except 429)
+          if (res.statusCode >= 400 && res.statusCode < 500 && res.statusCode !== 429) {
+            const errorText = await res.body.text();
+            throw new AmorceAPIError(
+              `Transaction failed with status ${res.statusCode}`,
+              res.statusCode,
+              errorText
+            );
+          }
+
+          // Server errors (5xx)
+          if (res.statusCode >= 500) {
+            throw new Error(`Server error: ${res.statusCode}`);
+          }
+
+          return res;
+        },
+        {
+          retries: 3,
+          minTimeout: 1000,    // 1s
+          maxTimeout: 10000,   // 10s
+          randomize: true,     // Adds 0-2s jitter
+          onFailedAttempt: (error) => {
+            console.warn(`Transaction retry attempt ${error.attemptNumber}: ${error.message}`);
+          }
+        }
+      );
+
+      // Parse response and build AmorceResponse
+      const jsonData = await response.body.json() as any;
+
+      return new AmorceResponseImpl(
+        jsonData.transaction_id || key,
+        response.statusCode,
+        {
+          status: jsonData.status || 'success',
+          message: jsonData.message,
+          data: jsonData.data
+        },
+        undefined  // No error for successful responses
+      );
+
     } catch (e) {
       if (e instanceof AmorceAPIError) {
         throw e;

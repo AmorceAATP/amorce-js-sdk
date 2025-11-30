@@ -174,16 +174,66 @@ declare class AmorceEnvelope {
 declare const Envelope: typeof AmorceEnvelope;
 
 /**
- * Amorce Client Module (Task 2.4 - Updated for v0.1.7)
+ * Amorce Response Models Module
+ * TypeScript interfaces and classes for structured responses.
+ * Matches Python SDK's Pydantic models for consistency.
+ */
+/**
+ * Configuration for Amorce clients.
+ */
+interface AmorceConfig {
+    directoryUrl: string;
+    orchestratorUrl: string;
+}
+/**
+ * Nested result data from a successful transaction.
+ */
+interface TransactionResult {
+    status: string;
+    message?: string;
+    data?: Record<string, any>;
+}
+/**
+ * Standardized response wrapper for transact() operations.
+ * Provides consistent interface across sync and async implementations.
+ */
+interface AmorceResponse {
+    transaction_id: string;
+    status_code: number;
+    result?: TransactionResult;
+    error?: string;
+    /**
+     * Check if transaction was successful (2xx status)
+     */
+    isSuccess(): boolean;
+    /**
+     * Check if error is retryable (5xx or 429)
+     */
+    isRetryable(): boolean;
+}
+/**
+ * Concrete implementation of AmorceResponse.
+ */
+declare class AmorceResponseImpl implements AmorceResponse {
+    transaction_id: string;
+    status_code: number;
+    result?: TransactionResult | undefined;
+    error?: string | undefined;
+    constructor(transaction_id: string, status_code: number, result?: TransactionResult | undefined, error?: string | undefined);
+    isSuccess(): boolean;
+    isRetryable(): boolean;
+}
+
+/**
+ * Amorce Client Module (v2.1.0 - Enhanced)
  * High-level HTTP client for the Amorce Agent Transaction Protocol (AATP).
- * Encapsulates signature creation and transport using fetch with retry logic.
  *
- * v0.1.7 Updates:
- * - Flat transaction protocol (signature in header, not wrapped in envelope)
- * - Auto-derived Agent ID from identity
- * - Proper exception handling
- * - Updated API key header to X-API-Key
- * - URL validation
+ * v2.1.0 Updates (Feature Parity with Python SDK v0.2.0):
+ * - HTTP/2 support via undici
+ * - Exponential backoff + jitter via p-retry
+ * - Idempotency key generation (UUIDv4)
+ * - Structured AmorceResponse return type
+ * - Additional headers: X-Amorce-Idempotency, X-Amorce-Agent-ID
  */
 
 /**
@@ -197,8 +247,8 @@ declare class PriorityLevel {
 }
 interface ServiceContract {
     service_id: string;
-    provider_agent_id: string;
-    service_type: string;
+    provider_agent_id?: string;
+    service_type?: string;
     [key: string]: any;
 }
 declare class AmorceClient {
@@ -209,24 +259,35 @@ declare class AmorceClient {
     private apiKey?;
     constructor(identity: IdentityManager, directoryUrl: string, orchestratorUrl: string, agentId?: string, apiKey?: string);
     /**
-     * P-7.1: Discover services from the Trust Directory.
+     * Discover services from the Trust Directory.
+     * Uses p-retry for exponential backoff with jitter.
      */
     discover(serviceType: string): Promise<ServiceContract[]>;
     /**
-     * P-9.3: Execute a transaction via the Orchestrator.
-     * FIX: Aligned with Orchestrator v1.4 protocol (Flat JSON + Header Signature).
-     * Matches Python SDK's transact() method.
+     * Execute a transaction via the Orchestrator.
+     *
+     * v2.1.0 Enhancements:
+     * - HTTP/2 via undici (automatic for https://)
+     * - Exponential backoff + jitter via p-retry
+     * - Idempotency key auto-generation
+     * - Returns AmorceResponse with utility methods
+     *
+     * @param serviceContract - Service identifier (must contain service_id)
+     * @param payload - Transaction payload
+     * @param priority - Priority level (normal|high|critical)
+     * @param idempotencyKey - Optional idempotency key (auto-generated if not provided)
+     * @returns AmorceResponse with transaction details
      */
-    transact(serviceContract: ServiceContract, payload: Record<string, any>, priority?: AmorcePriority): Promise<any>;
+    transact(serviceContract: ServiceContract, payload: Record<string, any>, priority?: AmorcePriority, idempotencyKey?: string): Promise<AmorceResponse>;
 }
 
 /**
  * Amorce SDK for JavaScript/TypeScript
- * Version 0.1.7
+ * Version 2.1.0
  *
- * Aligned with nexus-py-sdk v0.1.7
+ * Aligned with amorce-py-sdk v0.2.0
  */
-declare const SDK_VERSION = "0.1.7";
+declare const SDK_VERSION = "2.1.0";
 declare const AATP_VERSION = "0.1.0";
 
-export { AATP_VERSION, AmorceAPIError, AmorceClient, AmorceConfigError, AmorceEnvelope, AmorceError, AmorceNetworkError, type AmorcePriority, AmorceSecurityError, AmorceValidationError, EnvVarProvider, Envelope, IdentityManager, type IdentityProvider, PriorityLevel, SDK_VERSION, type SenderInfo, type ServiceContract, type SettlementInfo };
+export { AATP_VERSION, AmorceAPIError, AmorceClient, type AmorceConfig, AmorceConfigError, AmorceEnvelope, AmorceError, AmorceNetworkError, type AmorcePriority, type AmorceResponse, AmorceResponseImpl, AmorceSecurityError, AmorceValidationError, EnvVarProvider, Envelope, IdentityManager, type IdentityProvider, PriorityLevel, SDK_VERSION, type SenderInfo, type ServiceContract, type SettlementInfo, type TransactionResult };

@@ -14,10 +14,13 @@ The Amorce SDK allows any JavaScript application (Node.js or Browser) to become 
 * **Zero-Trust Security**: Every request is cryptographically signed (Ed25519) locally.
 * **Agent Identity**: Manage your agent's identity and keys securely without complexity.
 * **Priority Lane**: Mark critical messages (`high`, `critical`) to bypass network congestion.
-* **Resilience**: Automatic retry logic with exponential backoff for unstable networks (handles 503, 429).
-* **Developer Experience (v0.1.7)**: Simplified `IdentityManager` with auto-derived Agent IDs and provider pattern.
+* **HTTP/2 Support (v2.1.0)**: Automatic HTTP/2 via undici for multiplexed connections and better performance.
+* **Exponential Backoff + Jitter (v2.1.0)**: Advanced retry logic via p-retry (handles 429, 503, 504) with randomization to prevent thundering herd.
+* **Idempotency Keys (v2.1.0)**: Auto-generated UUIDv4 for safe retries and transaction deduplication.
+* **Structured Responses (v2.1.0)**: `AmorceResponse` with `isSuccess()` and `isRetryable()` utility methods.
+* **Developer Experience**: Simplified `IdentityManager` with auto-derived Agent IDs and provider pattern.
 * **Robust Error Handling**: Specific exceptions (`AmorceNetworkError`, `AmorceAPIError`) for reliable production code.
-* **Isomorphic**: Works in Node.js and Modern Browsers.
+* **Isomorphic**: Works in Node.js (requires Node.js 18+) and Modern Browsers.
 * **Type Safe**: Native TypeScript support for robust development.
 
 ---
@@ -28,7 +31,9 @@ The Amorce SDK allows any JavaScript application (Node.js or Browser) to become 
 npm install @amorce/sdk
 ```
 
-The SDK automatically includes all required dependencies (`libsodium-wrappers`, `fast-json-stable-stringify`, `uuid`, `fetch-retry`, `cross-fetch`).
+The SDK automatically includes all required dependencies (`libsodium-wrappers`, `fast-json-stable-stringify`, `uuid`, `undici`, `p-retry`).
+
+**Requirements:** Node.js 18+ for optimal HTTP/2 support.
 
 ---
 
@@ -112,9 +117,10 @@ try {
     PriorityLevel.HIGH
   );
   
-  if (response.status === 'success') {
+  // v2.1.0: Response is now an AmorceResponse object with utility methods
+  if (response.isSuccess()) {
     console.log(`✅ Success! Tx ID: ${response.transaction_id}`);
-    console.log(`Data:`, response.data);
+    console.log(`Data:`, response.result?.data);
   } else {
     console.log(`⚠️ Server Error:`, response);
   }
@@ -291,6 +297,17 @@ This project is licensed under the MIT License.
 ---
 
 ## 📝 Changelog
+
+### v2.1.0 (2025-11-30)
+* **[FEATURE]** HTTP/2 support via `undici` for multiplexed connections and better performance
+* **[FEATURE]** Exponential backoff + jitter via `p-retry` (replaces basic `fetch-retry`)
+* **[FEATURE]** Auto-generated idempotency keys (UUIDv4) for transaction deduplication
+* **[FEATURE]** Structured `AmorceResponse` with `isSuccess()` and `isRetryable()` utility methods
+* **[FEATURE]** Additional headers: `X-Amorce-Idempotency`, `X-Amorce-Agent-ID`
+* **[ENHANCEMENT]** Feature parity with Python SDK v0.2.0
+* **[BREAKING]** Requires Node.js 18+ for optimal HTTP/2 support
+* **[DEPENDENCY]** Replaced `cross-fetch` with `undici`
+* **[DEPENDENCY]** Replaced `fetch-retry` with `p-retry`
 
 ### v0.1.7 (2025-11-28)
 * **[BREAKING]** Updated transaction protocol to use flat JSON structure with signature in header
