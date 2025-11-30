@@ -1,6 +1,6 @@
 # Amorce TypeScript/JavaScript SDK (AATP)
 
-[![npm version](https://img.shields.io/npm/v/@nexus/sdk.svg)](https://www.npmjs.com/package/@nexus/sdk)
+[![npm version](https://img.shields.io/npm/v/@amorce/sdk.svg)](https://www.npmjs.com/package/@amorce/sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Official TypeScript/JavaScript SDK for the Amorce Agent Transaction Protocol (AATP).**
@@ -25,7 +25,7 @@ The Amorce SDK allows any JavaScript application (Node.js or Browser) to become 
 ## 📦 Installation
 
 ```bash
-npm install @nexus/sdk
+npm install @amorce/sdk
 ```
 
 The SDK automatically includes all required dependencies (`libsodium-wrappers`, `fast-json-stable-stringify`, `uuid`, `fetch-retry`, `cross-fetch`).
@@ -78,7 +78,7 @@ import {
   PriorityLevel,
   AmorceNetworkError,
   AmorceAPIError 
-} from '@nexus/sdk';
+} from '@amorce/sdk';
 
 // Configuration (Use Env Vars in Prod!)
 const DIRECTORY_URL = process.env.NEXUS_DIRECTORY_URL || 'https://directory.amorce.io';
@@ -139,7 +139,7 @@ import {
   AmorceConfigError, 
   AmorceNetworkError, 
   AmorceAPIError 
-} from '@nexus/sdk';
+} from '@amorce/sdk';
 
 try {
   await client.transact(...);
@@ -258,8 +258,8 @@ To contribute to the SDK:
 
 ```bash
 # Clone the repository
-git clone https://github.com/trebortGolin/nexus-js-sdk.git
-cd nexus-js-sdk
+git clone https://github.com/trebortGolin/amorce-js-sdk.git
+cd amorce-js-sdk
 
 # Install dependencies
 npm install
@@ -284,9 +284,9 @@ This project is licensed under the MIT License.
 
 ## 🔗 Related Projects
 
-* [nexus-py-sdk](https://github.com/trebortGolin/nexus_py_sdk) - Python SDK for AATP
+* [amorce_py_sdk](https://github.com/trebortGolin/amorce_py_sdk) - Python SDK for AATP
 * [amorce-trust-directory](https://github.com/trebortGolin/amorce-trust-directory) - Trust Directory service
-* [nexus-console](https://github.com/trebortGolin/nexus-console) - Management console
+* [amorce-console](https://github.com/trebortGolin/amorce-console) - Management console
 
 ---
 
