@@ -48,7 +48,7 @@ An Agent is defined by its **Private Key**. Never share this key.
 Generate a new identity in memory instantly. Perfect for QA scripts or temporary bots.
 
 ```typescript
-import { IdentityManager } from '@nexus/sdk';
+import { IdentityManager } from '@amorce/sdk';
 
 // Generates a fresh Ed25519 keypair in memory (Ephemeral)
 const identity = await IdentityManager.generate();
@@ -63,7 +63,7 @@ console.log(`Public Key: ${identity.getPublicKeyPem()}`);
 Load your identity from a secure source or environment variable.
 
 ```typescript
-import { IdentityManager, EnvVarProvider } from '@nexus/sdk';
+import { IdentityManager, EnvVarProvider } from '@amorce/sdk';
 
 // Load from Environment Variable (Recommended for production)
 const provider = new EnvVarProvider('AGENT_PRIVATE_KEY');
@@ -86,8 +86,8 @@ import {
 } from '@amorce/sdk';
 
 // Configuration (Use Env Vars in Prod!)
-const DIRECTORY_URL = process.env.NEXUS_DIRECTORY_URL || 'https://directory.amorce.io';
-const ORCHESTRATOR_URL = process.env.NEXUS_ORCHESTRATOR_URL || 'https://api.amorce.io';
+const DIRECTORY_URL = process.env.AMORCE_DIRECTORY_URL || 'https://directory.amorce.io';
+const ORCHESTRATOR_URL = process.env.AMORCE_ORCHESTRATOR_URL || 'https://api.amorce.io';
 
 // 1. Generate or load identity
 const identity = await IdentityManager.generate();
@@ -161,6 +161,166 @@ try {
   }
 }
 ```
+
+---
+
+## 🤝 Human-in-the-Loop (HITL) Support
+
+Enable human oversight for critical agent decisions with built-in approval workflows.
+
+### When to Use HITL
+
+- **High-value transactions** - Booking reservations, making purchases
+- **Data sharing** - Before sending personal information to third parties
+- **Irreversible actions** - Cancellations, deletions, confirmations
+- **Regulatory compliance** - Finance, healthcare, legal industries
+
+### Basic HITL Workflow
+
+```typescript
+import { AmorceClient, IdentityManager } from '@amorce/sdk';
+
+const identity = await IdentityManager.generate();
+const client = new AmorceClient(
+  identity,
+  'https://directory.amorce.io',
+  'https://api.amorce.io'
+);
+
+// 1. Agent negotiates with service
+const response = await client.transact(
+  { service_id: 'srv_restaurant_123' },
+  { intent: 'book_table', guests: 4, date: '2025-12-05' }
+);
+
+// 2. Request human approval before finalizing
+const approvalId = await client.requestApproval({
+  transactionId: response.transaction_id,
+  summary: `Book table for 4 guests at ${response.restaurant.name}`,
+  details: response.result,
+  timeoutSeconds: 300  // 5 minute timeout
+});
+
+console.log(`Awaiting approval: ${approvalId}`);
+
+// 3. Human reviews and approves (via SMS, email, app, etc.)
+// ... your notification logic here ...
+
+// 4. Check approval status
+const status = await client.checkApproval(approvalId);
+if (status.status === 'approved') {
+  // 5. Finalize the transaction
+  const finalResponse = await client.transact(
+    { service_id: 'srv_restaurant_123' },
+    { intent: 'confirm_booking', booking_id: response.booking_id }
+  );
+  console.log('✅ Booking confirmed!');
+}
+```
+
+### Submitting Approval Decisions
+
+Your application collects human input and submits the decision:
+
+```typescript
+// Human approved via your UI/SMS/voice interface
+await client.submitApproval({
+  approvalId: approvalId,
+  decision: 'approve',  // or 'reject'
+  approvedBy: 'user@example.com',
+  comments: 'Looks good for the business lunch'
+});
+```
+
+### LLM-Interpreted Approvals
+
+Use AI to interpret natural language responses:
+
+```typescript
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// Human responds: "yes sounds perfect"
+const humanResponse = "yes sounds perfect";
+
+// LLM interprets the intent
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+
+const result = await model.generateContent(
+  `Is this approving or rejecting? "${humanResponse}" Answer: APPROVE or REJECT`
+);
+const interpretation = result.response.text();
+
+const decision = interpretation.includes('APPROVE') ? 'approve' : 'reject';
+
+await client.submitApproval({
+  approvalId,
+  decision,
+  approvedBy: 'user@example.com',
+  comments: `Original response: ${humanResponse}`
+});
+```
+
+### Channel-Agnostic Notifications
+
+HITL is **protocol-level** - you choose how to notify humans:
+
+- **SMS** (Twilio): "Sarah wants to book Le Petit Bistro for 4. Reply YES/NO"
+- **Email**: Send approval link with one-click approve/reject
+- **Voice** (Vapi.ai): "Your assistant needs approval. Say approve or decline"
+- **Push notification**: Mobile app notification
+- **Slack/Teams**: Bot message with buttons
+
+**Example with Twilio:**
+```typescript
+import twilio from 'twilio';
+
+const client = twilio(accountSid, authToken);
+
+// Create approval
+const approvalId = await amorceClient.requestApproval({...});
+
+// Send SMS
+await client.messages.create({
+  to: '+1234567890',
+  from: '+0987654321',
+  body: `Sarah needs approval: Book table for 4 at Le Petit Bistro tomorrow 7pm. Reply YES or NO`
+});
+
+// Poll for response or use webhook
+// When you receive "YES", submit approval
+await amorceClient.submitApproval({
+  approvalId,
+  decision: 'approve',
+  approvedBy: 'sms:+1234567890'
+});
+```
+
+### Advanced: Approval Timeouts
+
+Approvals automatically expire after the timeout period:
+
+```typescript
+const approvalId = await client.requestApproval({
+  transactionId: txId,
+  summary: 'High-value purchase: $5,000',
+  timeoutSeconds: 600  // 10 minutes
+});
+
+// Later...
+const status = await client.checkApproval(approvalId);
+if (status.status === 'expired') {
+  console.log('⏱️ Approval request timed out - transaction cancelled');
+}
+```
+
+### Best Practices
+
+1. **Clear summaries** - Make approval requests easy to understand
+2. **Appropriate timeouts** - Balance urgency vs. convenience
+3. **Audit trail** - All approvals are logged with timestamps and user IDs
+4. **Fallback handling** - Handle expired/rejected approvals gracefully
+5. **Security** - Verify human identity before submitting approvals
 
 ---
 
