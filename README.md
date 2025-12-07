@@ -164,6 +164,232 @@ try {
 
 ---
 
+## 🛡️ For Builders: Protect Your API
+
+**Are you building an AI Agent?** Use the SDK to verify incoming requests on your server.
+
+### Why This Matters
+
+- ✅ **Cryptographic proof** of sender identity (Ed25519 signatures)
+- ✅ **Zero-trust by default** - every request is verified
+- ✅ **Intent whitelisting** - only allow specific actions  
+- ✅ **Automatic key revocation** - invalid agents rejected instantly
+- ✅ **No maintenance burden** - public keys auto-fetched from Trust Directory
+
+### How to Verify Requests
+
+```typescript
+import { verifyRequest, AmorceSecurityError } from '@amorce/sdk';
+import express from 'express';
+
+const app = express();
+
+app.post('/api/v1/webhook', express.json(), async (req, res) => {
+  try {
+    // ✅ AUTOMATIC VERIFICATION
+    // SDK fetches public key from Trust Directory and verifies signature
+    const verified = await verifyRequest({
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+      allowedIntents: ['book_table', 'check_availability', 'cancel']
+    });
+    
+    console.log(`✅ Verified request from: ${verified.agentId}`);
+    console.log(`Intent: ${verified.payload.payload.intent}`);
+    
+    // Your business logic here - 100% sure it's legitimate
+    if (verified.payload.payload.intent === 'book_table') {
+      return res.json({ status: 'confirmed', table: 'A5', time: '19:00' });
+    }
+    
+  } catch (e) {
+    if (e instanceof AmorceSecurityError) {
+      console.log(`❌ Rejected: ${e.message}`);
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    throw e;
+  }
+});
+```
+
+**That's it!** Your API is now protected by cryptographic verification.
+
+### Advanced: Manual Public Key (Offline/Testing)
+
+For testing or private networks, you can skip the Trust Directory lookup:
+
+```typescript
+// Provide public key directly (no network call)
+const verified = await verifyRequest({
+  headers: req.headers,
+  body: req.body,
+  publicKey: "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
+});
+```
+
+---
+
+## 📋 Register Your Agent (Optional)
+
+Want to list your service in the Amorce Network? Generate your manifest:
+
+```typescript
+const identity = await IdentityManager.generate();
+
+// 🖨️  Generate manifest JSON
+const manifest = identity.toManifestJson({
+  name: 'My Restaurant Bot',
+  endpoint: 'https://my-api.example.com/api/v1/webhook',
+  capabilities: ['book_table', 'check_availability', 'cancel_reservation'],
+  description: 'Fine dining reservations with real-time availability'
+});
+
+// Save it
+import fs from 'fs';
+fs.writeFileSync('agent-manifest.json', manifest);
+
+console.log('✅ Manifest created! Submit it to the Trust Directory to get listed.');
+```
+
+**What you get:**
+- 🌐 Discoverable by other agents in the network
+- 🔐 Your public key automatically distributed
+- 📊 Trust score based on transaction history
+
+---
+
+## 🔌 MCP Integration - Production Ready ✅
+
+**Use Model Context Protocol tools through Amorce with cryptographic security and human oversight.**
+
+The Amorce SDK provides production-ready integration with [Model Context Protocol](https://modelcontextprotocol.io) servers, adding Ed25519 signatures and human-in-the-loop approvals to all tool calls.
+
+### 🚀 Quick Start
+
+```typescript
+import { IdentityManager, MCPToolClient } from '@amorce/sdk';
+
+// 1. Create your agent identity
+const identity = await IdentityManager.generate();
+
+// 2. Connect to MCP wrapper
+const mcp = new MCPToolClient(identity, 'http://localhost:5001');
+
+// 3. Discover available tools
+const tools = await mcp.listTools();
+for (const tool of tools) {
+  const hitl = tool.requiresApproval ? '🔒' : '✓';
+  console.log(`${hitl} ${tool.name}: ${tool.description}`);
+}
+
+// 4. Call tools (read operations)
+const result = await mcp.callTool('filesystem', 'read_file', {
+  path: '/tmp/data.txt'
+});
+console.log(result);
+
+// 5. Call tools requiring approval (write operations)
+try {
+  await mcp.callTool('filesystem', 'write_file', {
+    path: '/tmp/output.txt',
+    content: 'Hello from Amorce!'
+  });
+} catch (error) {
+  console.log('Approval required!');  
+  // Request approval through orchestrator
+  const approvalId = await client.requestApproval({...});  
+  const result = await mcp.callTool('filesystem', 'write_file', {
+    path: '/tmp/output.txt',
+    content: 'Hello!'
+  }, approvalId);
+}
+```
+
+### 📖 Complete Example with HITL
+
+```typescript
+import { IdentityManager, MCPToolClient, AmorceClient } from '@amorce/sdk';
+
+// Setup
+const identity = await IdentityManager.generate();
+const mcp = new MCPToolClient(identity, 'http://localhost:5001');
+const client = new AmorceClient(
+  identity,
+  'https://directory.amorce.io',
+  'https://api.amorce.io'
+);
+
+// List tools and check HITL requirements
+const tools = await mcp.listTools();
+const writeTool = tools.find(t => t.name === 'write_file');
+console.log(`Write file requires approval: ${writeTool.requiresApproval}`);  // true
+
+// Attempt without approval (will fail)
+try {
+  const result = await mcp.callTool('filesystem', 'write_file', {
+    path: '/tmp/important.txt',
+    content: 'Critical data'
+  });
+} catch (error) {
+  console.log(`Blocked: ${error.message}`);  // "Tool requires approval"
+}
+    
+// Request approval
+const approvalId = await client.requestApproval({
+  summary: 'Write ML model output file',
+  details: { path: '/tmp/important.txt', content: 'Critical data' },
+  timeoutSeconds: 300
+});
+
+// Human reviews and approves (via UI or API)
+// ... approval workflow ...
+
+// Execute with approval
+const result = await mcp.callTool('filesystem', 'write_file', {
+  path: '/tmp/important.txt',
+  content: 'Critical data'
+}, approvalId);
+
+console.log(`File written successfully: ${result}`);
+```
+
+### 🎯 Tool Categories
+
+| Category | Examples | HITL Required |
+|----------|----------|---------------|
+| **Read Operations** | read_file, list_directory, search | ❌ No |
+| **Write Operations** | write_file, edit_file | ✅ Yes |
+| **Destructive Operations** | delete_file, move_file | ✅ Yes |
+| **Search/Query** | brave_search, database_query | ❌ No (read-only) |
+
+### 🔗 Available MCP Servers
+
+Access 80+ production MCP servers through Amorce:
+
+```typescript
+// Filesystem operations
+await mcp.callTool('filesystem', 'read_file', { path: '/data/input.json' });
+
+// Web search
+await mcp.callTool('search', 'brave_search', { query: 'AI agents 2024' });
+
+// Database access (with HITL)
+await mcp.callTool('postgres', 'execute_query', 
+  { sql: 'SELECT * FROM users' }, 
+  approvalId
+);
+
+// Git operations (with HITL)
+await mcp.callTool('git', 'commit', 
+  { message: 'Update config' }, 
+  approvalId
+);
+```
+
+[View all 80+ MCP servers →](https://github.com/modelcontextprotocol/servers)
+
+---
+
 ## 🤝 Human-in-the-Loop (HITL) Support
 
 Enable human oversight for critical agent decisions with built-in approval workflows.
@@ -387,6 +613,32 @@ A: Use build tools like Webpack or Vite that support environment variable inject
 * `getPublicKeyPem(): string` - Returns public key in PEM format.
 * `getAgentId(): string` - Returns SHA-256 hash of public key (auto-derived agent ID).
 * `sign(message): Promise<string>` - Signs a message and returns base64 signature.
+* `toManifestJson(options): string` - **NEW v3.0.0** - Generates agent manifest JSON for registration.
+
+### `verifyRequest()` **NEW v3.0.0**
+
+```typescript
+verifyRequest(options: {
+  headers: Record<string, string>,
+  body: Buffer | string,
+  allowedIntents?: string[],
+  publicKey?: string,
+  directoryUrl?: string
+}): Promise<VerifiedRequest>
+```
+
+For builders - verify incoming signed requests from other agents.
+
+### `MCPToolClient` **NEW v3.0.0**
+
+```typescript
+// Constructor
+new MCPToolClient(identity: IdentityManager, wrapperUrl: string)
+
+// Methods
+listTools(): Promise<MCPTool[]>  // Discover available tools
+callTool(server: string, tool: string, args: any, approvalId?: string): Promise<any>
+```
 
 ### `AmorceClient`
 
@@ -406,6 +658,9 @@ new AmorceClient(
 
 * `discover(serviceType: string): Promise<ServiceContract[]>` - Discovers services from Trust Directory.
 * `transact(serviceContract, payload, priority?): Promise<any>` - Executes a transaction.
+* `requestApproval(options): Promise<string>` - **NEW v3.0.0** - Create HITL approval request.
+* `checkApproval(approvalId): Promise<ApprovalStatus>` - **NEW v3.0.0** - Check approval status.
+* `submitApproval(options): Promise<void>` - **NEW v3.0.0** - Submit approval decision.
 
 ### Exception Classes
 
@@ -457,6 +712,39 @@ This project is licensed under the MIT License.
 ---
 
 ## 📝 Changelog
+
+### v3.0.0 (2025-12-07) 🆕
+
+**MAJOR RELEASE - Full Feature Parity with Python SDK v0.2.1!**
+
+* **[NEW]** `verifyRequest()` - Verify incoming signed requests from other agents
+  - Auto-fetch public keys from Trust Directory
+  - Intent whitelisting for authorization
+  - Full Ed25519 signature verification
+  - For builders protecting their APIs
+
+* **[NEW]** HITL (Human-in-the-Loop) Support
+  - `requestApproval()` - Create approval requests
+  - `checkApproval()` - Check approval status
+  - `submitApproval()` - Submit approval decisions
+  - Timeout handling with auto-expiry
+  - Complete approval workflow
+
+* **[NEW]** MCP Integration
+  - `MCPToolClient` for secure tool calling
+  - `listTools()` - Discover 80+ MCP tools
+  - `callTool()` - Execute with cryptographic signatures
+  - Automatic HITL detection for write operations
+  - Production-ready with rate limiting
+
+* **[NEW]** `toManifestJson()` - Generate agent registration manifests
+  - Auto-populated agent_id and public_key
+  - Easy Trust Directory submission
+
+* **[ENHANCEMENT]** Updated documentation with comprehensive examples
+* **[ENHANCEMENT]** 15 new unit tests for all features
+* **[BREAKING]** Major version bump (v2.x → v3.x)
+* **[ALIGNED]** 100% feature parity with Python SDK v0.2.1
 
 ### v2.1.0 (2025-11-30)
 * **[FEATURE]** HTTP/2 support via `undici` for multiplexed connections and better performance
