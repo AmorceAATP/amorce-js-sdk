@@ -1,9 +1,13 @@
 # Amorce TypeScript/JavaScript SDK (AATP)
 
 [![npm version](https://img.shields.io/npm/v/@amorce/sdk.svg)](https://www.npmjs.com/package/@amorce/sdk)
+[![GitHub](https://img.shields.io/github/stars/trebortGolin/amorce-js-sdk?style=social)](https://github.com/trebortGolin/amorce-js-sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Demo](https://img.shields.io/badge/demo-marketplace-success.svg)](https://github.com/trebortGolin/agent-marketplace-demo)
 
 **Official TypeScript/JavaScript SDK for the Amorce Agent Transaction Protocol (AATP).**
+
+**See it in action**: [Agent Marketplace Demo](https://github.com/trebortGolin/agent-marketplace-demo) - Watch AI agents negotiate with cryptographic security
 
 The Amorce SDK allows any JavaScript application (Node.js or Browser) to become a verified node in the **Agent Economy**. It provides the cryptographic primitives (Ed25519 via `libsodium`) and the transport layer required to transact securely with AI Agents (OpenAI, Google Gemini, Apple Intelligence).
 
