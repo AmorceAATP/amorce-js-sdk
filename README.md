@@ -715,6 +715,50 @@ This project is licensed under the MIT License.
 
 ---
 
+## 🤖 MCP Server for LLMs (NEW in v3.1.0)
+
+**Enable Claude and other LLMs to discover Amorce agents.**
+
+The `@amorce/mcp-server` package exposes Amorce's Agent Naming Service to Claude and other MCP-compatible LLMs.
+
+### Installation for Claude
+
+**Claude Desktop** - Add to `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "amorce": {
+      "command": "npx",
+      "args": ["@amorce/mcp-server"]
+    }
+  }
+}
+```
+
+**Claude Code:**
+```bash
+claude mcp add amorce -- npx @amorce/mcp-server
+```
+
+### Tools Available
+
+| Tool | Description |
+|------|-------------|
+| `search_agents` | Find agents by capability (semantic search) |
+| `get_agent` | Get agent details and endpoint |
+| `get_agent_manifest` | Get A2A manifest for integration |
+
+### Example Prompts for Claude
+
+Once installed, ask Claude:
+- "Find an agent that can book flights to Paris"
+- "Search Amorce for weather agents"
+- "What agents can help with currency exchange?"
+
+📦 **Package:** [`@amorce/mcp-server`](https://www.npmjs.com/package/@amorce/mcp-server)
+
+---
+
 ## 📝 Changelog
 
 ### v3.1.0 (2025-12-15) 🆕
