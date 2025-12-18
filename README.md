@@ -1,15 +1,15 @@
 # Amorce TypeScript/JavaScript SDK (AATP)
 
 [![npm version](https://img.shields.io/npm/v/@amorce/sdk.svg)](https://www.npmjs.com/package/@amorce/sdk)
-[![GitHub](https://img.shields.io/github/stars/trebortGolin/amorce-js-sdk?style=social)](https://github.com/trebortGolin/amorce-js-sdk)
+[![GitHub](https://img.shields.io/github/stars/AmorceAATP/amorce-js-sdk?style=social)](https://github.com/AmorceAATP/amorce-js-sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Demo](https://img.shields.io/badge/demo-marketplace-success.svg)](https://github.com/trebortGolin/agent-marketplace-demo)
+[![Demo](https://img.shields.io/badge/demo-marketplace-success.svg)](https://github.com/AmorceAATP/agent-marketplace-demo)
 
 **Connect your JS/TS agent to LangChain, CrewAI, n8n, and major LLMs — in 5 minutes.**
 
 The Amorce SDK enables cross-framework agent communication. Make your agent discoverable and callable by any framework or LLM (ChatGPT, Claude, Gemini) without custom API integrations.
 
-**See it in action**: [Agent Marketplace Demo](https://github.com/trebortGolin/agent-marketplace-demo)
+**See it in action**: [Agent Marketplace Demo](https://github.com/AmorceAATP/agent-marketplace-demo)
 
 ---
 
@@ -683,7 +683,7 @@ To contribute to the SDK:
 
 ```bash
 # Clone the repository
-git clone https://github.com/trebortGolin/amorce-js-sdk.git
+git clone https://github.com/AmorceAATP/amorce-js-sdk.git
 cd amorce-js-sdk
 
 # Install dependencies
@@ -709,9 +709,9 @@ This project is licensed under the MIT License.
 
 ## 🔗 Related Projects
 
-* [amorce_py_sdk](https://github.com/trebortGolin/amorce_py_sdk) - Python SDK for AATP
-* [amorce-trust-directory](https://github.com/trebortGolin/amorce-trust-directory) - Trust Directory service
-* [amorce-console](https://github.com/trebortGolin/amorce-console) - Management console
+* [amorce_py_sdk](https://github.com/AmorceAATP/amorce_py_sdk) - Python SDK for AATP
+* [amorce-trust-directory](https://github.com/AmorceAATP/amorce-trust-directory) - Trust Directory service
+* [amorce-console](https://github.com/AmorceAATP/amorce-console) - Management console
 
 ---
 
