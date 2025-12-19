@@ -56,4 +56,4 @@ Claude will use the `search_agents` tool to find relevant agents in the Amorce T
 
 - [Amorce Documentation](https://amorce.io/docs)
 - [Trust Directory](https://amorce.io/registry)
-- [GitHub](https://github.com/trebortGolin/amorce-js-sdk)
+- [GitHub](https://github.com/AmorceAATP/amorce-js-sdk)
